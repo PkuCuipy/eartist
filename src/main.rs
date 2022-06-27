@@ -1,15 +1,20 @@
 mod util;
 
-use std::cmp::{min, Ordering};
+use std::cmp::min;
 use std::fs::File;
 use std::io::*;
 use util::*;
+
+/* TODO LIST:
+    - 允许移除个体中面积小于某个值的图形
+    -
+*/
 
 
 fn main() {
 
     // 读取目标图片
-    let target = Canvas::read_from_file("./src/data/target2.jpg");
+    let target = Canvas::read_from_file("./src/data/target.jpg");
     let x_height = target.x_height;
     let y_width = target.y_width;
     let canvas_size = min(x_height, y_width);
@@ -46,7 +51,9 @@ fn main() {
                 }
                 // 以 ADD_SHAPE_PR 的概率新增一个图形
                 if random::uniform(0., 1.) < ADD_SHAPE_PR {
-                    child.add_shape("triangle", x_height, y_width); // FIXME: NOW ONLY TRIANGLE
+                    // child.add_shape("triangle", x_height, y_width); // FIXME: NOW ONLY TRIANGLE
+                    // child.add_shape("circle", x_height, y_width);
+                    child.add_shape("rectangle", x_height, y_width);
                 }
                 new_generation.push(child);
             }
@@ -77,7 +84,12 @@ fn main() {
         println!("his n_shapes = {}", gen_best.n_shapes());
 
         // 保存图像到文件
-        if gen % 200 == 0 {
+        if (gen <= 100) ||
+           (gen <= 1000 && gen % 10 == 0) ||
+           (gen <= 10000 && gen % 100 == 0) ||
+           (gen <= 100000 && gen % 1000 == 0) ||
+           (gen % 10000 == 0)
+        {
             let canv = gen_best.draw_self();
             canv.write_to_file(format!("./src/result/generation_best/{}.png", gen).as_str());
         }
@@ -102,3 +114,6 @@ fn main() {
     // write!(fout, "{}", output);
 
 }
+
+
+

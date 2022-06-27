@@ -1,7 +1,6 @@
 use std::cmp::{min, max};
 use std::fmt::Write;
 use serde::*;
-use crate::random::uniform;
 
 
 pub mod random {
@@ -94,8 +93,7 @@ struct Line {
 impl Line {
     /// 从两个点构造
     fn new(p1: &Point2D, p2: &Point2D) -> Line {
-        // debug_assert_ne!(p1.x, p2.x, "该直线不能用 y = kx + b 形式表示!");
-        let k = (p2.y - p1.y) / (p2.x - p1.x);
+        let k = (p2.y - p1.y) / (p2.x - p1.x);  // 这里可能是 NaN 或者 Infinity, 但无所谓
         let b = p1.y - k * p1.x;
         Line { k, b }
     }
@@ -189,7 +187,7 @@ impl Canvas {
         let j_left = min(j1, j2);
         let j_right = max(j1, j2);
         debug_assert!(j_right < self.y_width, "超出范围的网格坐标!");
-        for j in j_left..j_right {
+        for j in j_left..=j_right {
             let idx = self.idx_of(i, j);
             self.pixels[idx].overlaid_by(color);
         }
@@ -261,7 +259,7 @@ impl Shape {
             },
             "circle" => Shape::Circle {
                 center: Point2D::rand_new(0.0, x_height as f32, 0.0, y_width as f32),
-                radius: [uniform(0.0, 0.1 * min(x_height, y_width) as f32).clamp(1.0, f32::INFINITY)],  // FIXME: MAGIC_NUMBER: 0.1
+                radius: [crate::random::uniform(0.0, 0.1 * min(x_height, y_width) as f32).clamp(1.0, f32::INFINITY)],  // FIXME: MAGIC_NUMBER: 0.1
                 color: Color::rand_new(),
             },
             "rectangle" => Shape::Rectangle {
@@ -301,6 +299,13 @@ impl Shape {
 
     /// 把自己绘制在目标画布上
     fn draw_to(&self, canvas: &mut Canvas) {
+
+        // 将浮点坐标对齐到网格, 并对越界的规范到边界
+        let x_max = (canvas.x_height - 1) as f32;
+        let y_max = (canvas.y_width - 1) as f32;
+        let x2i = |x: f32| {x.round().clamp(0.0, x_max as f32) as usize};
+        let y2j = |y: f32| {y.round().clamp(0.0, y_max as f32) as usize};
+
         match self {
             Shape::Triangle {p1, p2, p3, color} => {
                 // 首先对三个点重命名, 使得 A.x ≤ B.x ≤ C.x
@@ -308,19 +313,16 @@ impl Shape {
                 three_points.sort_by(|p1, p2| p1.x.partial_cmp(&p2.x).unwrap());
                 let [p_a, p_b, p_c] = three_points;
                 debug_assert!(p_a.x <= p_b.x && p_b.x <= p_c.x);
-                // 现在三个点的状态如下所示:
+                //
                 //       A                  A           <---  i_start \
                 //      / \                / \                         }  Part I
                 //     /   \      or      /   \                       /
                 //   B `--_ \            /_-- ^` B      <---  i_mid  \
                 //          `C         C                <---  i_end  /   Part II
+                //
                 let l_ab = Line::new(p_a, p_b);
                 let l_ac = Line::new(p_a, p_c);
                 let l_bc = Line::new(p_b, p_c);
-                // 将浮点坐标对齐到网格, 并对越界的规范到边界
-                let [x_max, y_max] = [(canvas.x_height - 1) as f32, (canvas.y_width - 1) as f32];
-                let x2i = |x: f32| {x.round().clamp(0.0, x_max as f32) as usize};
-                let y2j = |y: f32| {y.round().clamp(0.0, y_max as f32) as usize};
                 let i_start = x2i(p_a.x);
                 let i_mid = x2i(p_b.x);
                 let i_end = x2i(p_c.x);
@@ -338,12 +340,49 @@ impl Shape {
                     canvas.draw_horizontal_line(i, j_one_side, j_another_side, color);
                 }
             },
+
             Shape::Circle { center, radius, color } => {
-                todo!()
+                let (r, cx, cy) = (radius[0], center.x, center.y);
+                let i_start = x2i(center.x - r);
+                let i_end = x2i(center.x + r);
+                //
+                //         ***          <---  i_start
+                //     **       **
+                //    **         **
+                //     **       **
+                //         ***          <---  i_end
+                //
+                let j_left = |i| { y2j(cy - f32::sqrt(r.powi(2) - (i as f32 - cx).powi(2) )) };
+                let j_right = |i| { y2j(cy + f32::sqrt(r.powi(2) - (i as f32 - cx).powi(2) )) };
+                // 按行绘制
+                for i in i_start..=i_end {
+                    canvas.draw_horizontal_line(i, j_left(i), j_right(i), color);
+                }
             },
+
             Shape::Rectangle {p1, p2, color} => {
-                todo!()
+                // 找到这个矩形的四个边界
+                let x_min = f32::min(p1.x, p2.x);
+                let x_max = f32::max(p1.x, p2.x);
+                let y_min = f32::min(p1.y, p2.y);
+                let y_max = f32::max(p1.y, p2.y);
+                //
+                //  j_left       j_right
+                //     * - - - - - *    <---  i_start
+                //     |           |
+                //     |           |
+                //     * - - - - - *    <---  i_end
+                //
+                let i_start = x2i(x_min);
+                let i_end = x2i(x_max);
+                let j_left = y2j(y_min);
+                let j_right = y2j(y_max);
+                // 按行绘制
+                for i in i_start..=i_end {
+                    canvas.draw_horizontal_line(i, j_left, j_right, color);
+                }
             },
+
             _ => panic!(),
         }
     }
@@ -433,5 +472,4 @@ impl Individual {
     pub fn get_fitness(&self) -> f32 {
         self.fitness.expect("请先显式调用 calc_fitness 计算适应度!")
     }
-
 }
