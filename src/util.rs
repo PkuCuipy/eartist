@@ -20,6 +20,26 @@ pub mod random {
     pub fn randint<T: rand_distr::uniform::SampleUniform>(low: T, high: T) -> T {
         thread_rng().gen_range(low, high)
     }
+
+    /// 按照权重随机抽取一个
+    pub fn weighted_choice<T: Clone + Copy>(items: &[T], weight: &[f32]) -> T {
+        debug_assert!(weight.iter().all(|w| { *w >= 0.0 }) && weight.iter().sum::<f32>() > 0.0);   // 权重非负、不能全 0
+        debug_assert!(items.len() == weight.len());         // 待抽签的 list 和权重 list 必须等长
+        let mut accumulate = weight.clone().to_vec();
+        let mut curr_sum = weight[0];
+        for i in 1..accumulate.len() {
+            curr_sum += weight[i];
+            accumulate[i] = curr_sum;
+        }
+        let rand = uniform(0.0, curr_sum);
+        // 找到第一个使得 accumulate[i] >= rand 的 i, 然后返回 items[i]
+        for i in 0..items.len() {
+            if accumulate[i] >= rand {
+                return items[i]
+            }
+        }
+        panic!("Unreachable!");
+    }
 }
 trait MutatableFloat {
     fn mutate(self, sigma: f32, min: f32, max: f32) -> Self;
@@ -219,7 +239,11 @@ impl Canvas {
             buffer.push(pixel.g as u8);
             buffer.push(pixel.b as u8);
         }
-        image::save_buffer(filename, &buffer, self.y_width as u32, self.x_height as u32, image::ColorType::Rgb8).unwrap();
+        image::save_buffer(filename,
+                           &buffer,
+                           self.y_width as u32,
+                           self.x_height as u32,
+                           image::ColorType::Rgb8).unwrap();
     }
 
 }
@@ -381,9 +405,7 @@ impl Shape {
                 for i in i_start..=i_end {
                     canvas.draw_horizontal_line(i, j_left, j_right, color);
                 }
-            },
-
-            _ => panic!(),
+            }
         }
     }
 }
@@ -442,8 +464,8 @@ impl Individual {
     }
 
     /// 令个体添加一个 Shape. 类型指定, 但属性随机.
-    pub fn add_shape(&mut self, type_name: &str, x_height: usize, y_width: usize) {
-        self.shapes.push(Shape::rand_new(type_name, x_height, y_width));
+    pub fn add_shape(&mut self, type_name: &str) {
+        self.shapes.push(Shape::rand_new(type_name, self.env_height, self.env_width));
         self.fitness = None;    // fitness 有待重新计算
     }
 

@@ -5,9 +5,10 @@ use std::fs::File;
 use std::io::*;
 use util::*;
 
-/* TODO LIST:
-    - 允许移除个体中面积小于某个值的图形
-    -
+/* TODO list:
+    - 编译为 Wasm, 在 Web 端实现可调的超参数交互 (main 中的 const 变量绝大多数应实现交互可改)
+    - 允许 [定期/交互性] 移除个体中 [面积过小] 的图形
+    - 允许 [定期/交互性] 扫描个体的全部图形, 尝试移除 (比如如果移除后 fitness 上升, 则移除之)
 */
 
 
@@ -20,13 +21,24 @@ fn main() {
     let canvas_size = min(x_height, y_width);
 
     // 设定种群超参数
-    const BG_COLOR: (f32, f32, f32) = (0., 0., 0.);
-    const POP_SIZE: usize = 4;      // 种群大小. 取值范围 [1, ∞)
-    const PROP_AMOUNT: usize = 4;   // 每个个体的产仔数. 取值范围 [1, ∞)
-    const N_GUARD: usize = 2;       // 上一轮的前 N_GUARD 个个体也参与本轮竞争 (而非产仔后立刻抛弃). 取值范围 [0, POP_SIZE]
-    const AMP: f32 = 1.0;           // 变异剧烈程度
-    const MUTATE_RATIO: f32 = 0.1;  // 最多多少比例的图形发生变异
-    const ADD_SHAPE_PR: f32 = 0.5;  // 每个新个体尝试新增一个图形的概率
+    const POP_SIZE: usize = 4;          // 种群大小. 取值范围 [1, ∞)
+    const PROP_AMOUNT: usize = 4;       // 每个个体的产仔数. 取值范围 [1, ∞)
+    const N_GUARD: usize = 2;           // 上一轮的前 N_GUARD 个个体也参与本轮竞争 (而非产仔后立刻抛弃). 取值范围 [0, POP_SIZE]
+
+    const BG_COLOR: (f32, f32, f32) = (0., 0., 0.);  // 背景色
+
+    const MUTATE_RATIO: f32 = 0.1;      // 最多多少比例的图形发生变异
+    const MUTATE_AMP: f32 = 1.0;        // 变异剧烈程度
+
+    const PR_ADD_SHAPE: f32 = 0.5;      // 每个新个体尝试新增一个图形的概率
+    const PR_TRIANGLE: f32 = 1.0;       // 使用三角形的概率权重
+    const PR_CIRCLE: f32 = 1.0;         // 使用圆形的概率权重
+    const PR_RECTANGLE: f32 = 1.0;      // 使用长方形的概率权重
+    // 在生成时, 首先按照 PR_ADD_SHAPE 决定 ｢是否生成｣. 如果 ｢是｣, 再根据三个图形的概率权重抽取其中一个进行生成.
+    // 这里后三个变量在交互上可以实现为 ｢等边三角图｣
+    assert!(PR_TRIANGLE + PR_CIRCLE + PR_RECTANGLE > 0.0, "这三个不能全为 0!");
+    assert!(PR_TRIANGLE >= 0.0 && PR_CIRCLE >= 0.0 && PR_RECTANGLE >= 0.0, "概率权重不能为负数!");
+
 
     // 创建最初的随机种群
     let mut last_population: Vec<Individual> = Vec::new();
@@ -35,7 +47,7 @@ fn main() {
     }
 
     // 开始迭代
-    for gen in 1..=1000000 {
+    for gen in 1..=100000 {
         println!("第 {} 轮开始迭代", gen);
 
         let mut new_generation: Vec<Individual> = Vec::with_capacity(POP_SIZE * PROP_AMOUNT + N_GUARD);
@@ -47,13 +59,14 @@ fn main() {
                 // 对自己至多 MUTATE_RATIO 的图形进行突变
                 let mutate_amount = random::randint(0, (ind.n_shapes() as f32 * MUTATE_RATIO) as usize + 1);
                 for _ in 0..mutate_amount {
-                    child.mutate_shape(random::randint(0usize, ind.n_shapes()), canvas_size, AMP);
+                    child.mutate_shape(random::randint(0usize, ind.n_shapes()), canvas_size, MUTATE_AMP);
                 }
                 // 以 ADD_SHAPE_PR 的概率新增一个图形
-                if random::uniform(0., 1.) < ADD_SHAPE_PR {
-                    // child.add_shape("triangle", x_height, y_width); // FIXME: NOW ONLY TRIANGLE
-                    // child.add_shape("circle", x_height, y_width);
-                    child.add_shape("rectangle", x_height, y_width);
+                if random::uniform(0., 1.) < PR_ADD_SHAPE {     // 决定是否新增一个图形
+                    let shape_chosen = random::weighted_choice(
+                        &["triangle", "circle", "rectangle"],           // 按照权重随机抽取一个图形
+                        &[PR_TRIANGLE, PR_CIRCLE, PR_RECTANGLE]);
+                    child.add_shape(shape_chosen);
                 }
                 new_generation.push(child);
             }
@@ -83,7 +96,7 @@ fn main() {
         println!("best fitness = {}", gen_best.get_fitness());
         println!("his n_shapes = {}", gen_best.n_shapes());
 
-        // 保存图像到文件
+        // 保存图像到文件 (考虑到越到后期越难进化, 保存频率逐渐降低)
         if (gen <= 100) ||
            (gen <= 1000 && gen % 10 == 0) ||
            (gen <= 10000 && gen % 100 == 0) ||
@@ -95,23 +108,6 @@ fn main() {
         }
 
     }
-
-    // // 从 .json 文件读取个体
-    // let mut json_str = String::new();
-    // File::open("./src/data/ind_cuipy.json").unwrap().read_to_string(&mut json_str).unwrap();
-    // let ind_cuipy = Individual::from_json(json_str.as_str());
-    //
-    // // 绘制该个体在 canvas 上
-    // let mut canvas3 = Canvas::new(200, 200);
-    // ind_cuipy.draw_self(&mut canvas3);
-    //
-    // // 将 canvas 输出到 String
-    // let mut output = String::new();
-    // canvas3.print_as_ascii(&mut output);
-    //
-    // // String 输出到文件
-    // let mut fout = File::create("./src/result/cuipy_image_ascii.txt").unwrap();
-    // write!(fout, "{}", output);
 
 }
 
