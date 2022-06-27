@@ -1,8 +1,6 @@
 mod util;
 
 use std::cmp::min;
-use std::fs::File;
-use std::io::*;
 use util::*;
 
 /* TODO list:
@@ -31,9 +29,9 @@ fn main() {
     const MUTATE_AMP: f32 = 1.0;        // 变异剧烈程度
 
     const PR_ADD_SHAPE: f32 = 0.5;      // 每个新个体尝试新增一个图形的概率
-    const PR_TRIANGLE: f32 = 1.0;       // 使用三角形的概率权重
-    const PR_CIRCLE: f32 = 1.0;         // 使用圆形的概率权重
-    const PR_RECTANGLE: f32 = 1.0;      // 使用长方形的概率权重
+    const PR_TRIANGLE: f32 = 3.14;       // 使用三角形的概率权重
+    const PR_CIRCLE: f32 = 1.23;         // 使用圆形的概率权重
+    const PR_RECTANGLE: f32 = 1.35;      // 使用长方形的概率权重
     // 在生成时, 首先按照 PR_ADD_SHAPE 决定 ｢是否生成｣. 如果 ｢是｣, 再根据三个图形的概率权重抽取其中一个进行生成.
     // 这里后三个变量在交互上可以实现为 ｢等边三角图｣
     assert!(PR_TRIANGLE + PR_CIRCLE + PR_RECTANGLE > 0.0, "这三个不能全为 0!");
