@@ -1,9 +1,10 @@
 use std::cmp::{min, max};
 use std::fmt::Write;
 use serde::*;
+use crate::random::uniform;
 
 
-mod random {
+pub mod random {
     use rand::{Rng, thread_rng};
 
     /// 生成 U(low, high) 随机浮点数
@@ -17,7 +18,7 @@ mod random {
     }
 
     /// 生成 [i, j) 随机整数
-    pub fn randint(low: i32, high: i32) -> i32 {
+    pub fn randint<T: rand_distr::uniform::SampleUniform>(low: T, high: T) -> T {
         thread_rng().gen_range(low, high)
     }
 }
@@ -70,12 +71,12 @@ pub struct Point2D {
 }
 impl Point2D {
     pub fn new(x: f32, y: f32) -> Point2D {
-        Point2D {x, y}
+        Point2D { x, y }
     }
     pub fn rand_new(x_min: f32, x_max: f32, y_min: f32, y_max: f32) -> Point2D {
         Point2D::new(
-        random::uniform(x_min, x_max),
-        random::uniform(y_min, y_max),
+            random::uniform(x_min, x_max),
+            random::uniform(y_min, y_max),
         )
     }
     pub fn mutate(&mut self, sigma: f32, amp: f32) {
@@ -99,6 +100,7 @@ impl Line {
         Line { k, b }
     }
 
+    /// 直线在 x 处的取值
     fn at(&self, x: f32) -> f32 {
         self.k * x + self.b
     }
@@ -132,23 +134,45 @@ impl Pixel {
     }
 }
 
-// 画布 (仅支持 RGB 三通道图像)
+// 画布 (RGB 的)
 pub struct Canvas {
-    x_height: usize,
-    y_width: usize,
+    pub x_height: usize,
+    pub y_width: usize,
     pixels: Vec<Pixel>,
 }
 impl Canvas {
     /// 新建一个 x_height × y_width 的纯黑画布
-    pub fn new(x_height: usize, y_width: usize) -> Canvas {
+    pub fn new(x_height: usize, y_width: usize, color: (f32, f32, f32)) -> Canvas {
+        let (r, g, b) = color;
         let n_pixels = x_height * y_width;
         let mut pixels = Vec::<Pixel>::with_capacity(n_pixels);
         for _ in 0..n_pixels {
-            pixels.push(Pixel::new(0.0, 0.0, 0.0));
+            pixels.push(Pixel::new(r, g, b));
         }
         Canvas {
             x_height,
             y_width,
+            pixels,
+        }
+    }
+
+    /// 从图片中读取
+    pub fn read_from_file(file_path: &str) -> Canvas {
+        let im = image::open(file_path).unwrap().to_rgb8();
+        let width = im.width() as usize;
+        let height = im.height() as usize;
+        let rgb_seq = im.into_raw();
+        let n_pixels = width * height;
+        let mut pixels =  Vec::<Pixel>::with_capacity(n_pixels);
+        for i in 0..n_pixels {
+            let r = rgb_seq[i * 3];
+            let g = rgb_seq[i * 3 + 1];
+            let b = rgb_seq[i * 3 + 2];
+            pixels.push(Pixel::new(r as f32, g as f32, b as f32));
+        }
+        Canvas {
+            x_height: height,
+            y_width: width,
             pixels,
         }
     }
@@ -183,15 +207,21 @@ impl Canvas {
 
     /// 将自己以 ASCII 格式输出
     pub fn print_as_ascii(&mut self, buf: &mut String) {
-        write!(buf, "h={} w={}\n", self.x_height, self.y_width);
+        write!(buf, "h={} w={}\n", self.x_height, self.y_width).unwrap();
         for pixel in &self.pixels {
-            write!(buf, "{} {} {}\n", pixel.r, pixel.g, pixel.b);
+            write!(buf, "{} {} {}\n", pixel.r, pixel.g, pixel.b).unwrap();
         }
     }
 
-    /// 将自己以 jpg 格式输出
-    pub fn write_to_file_jpg(filename: &str) {
-        todo!()
+    /// 将自己以图片格式输出到文件
+    pub fn write_to_file(&self, filename: &str) {
+        let mut buffer = Vec::with_capacity(self.x_height * self.y_width * 3);
+        for pixel in &self.pixels {
+            buffer.push(pixel.r as u8);
+            buffer.push(pixel.g as u8);
+            buffer.push(pixel.b as u8);
+        }
+        image::save_buffer(filename, &buffer, self.y_width as u32, self.x_height as u32, image::ColorType::Rgb8).unwrap();
     }
 
 }
@@ -199,7 +229,7 @@ impl Canvas {
 
 
 /// 三种用于生成图片的基本图元
-#[derive(Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 enum Shape {
     Triangle {
@@ -229,8 +259,16 @@ impl Shape {
                 p3: Point2D::rand_new(0.0, x_height as f32, 0.0, y_width as f32),
                 color: Color::rand_new(),
             },
-            "circle" => todo!(),
-            "rectangle" => todo!(),
+            "circle" => Shape::Circle {
+                center: Point2D::rand_new(0.0, x_height as f32, 0.0, y_width as f32),
+                radius: [uniform(0.0, 0.1 * min(x_height, y_width) as f32).clamp(1.0, f32::INFINITY)],  // FIXME: MAGIC_NUMBER: 0.1
+                color: Color::rand_new(),
+            },
+            "rectangle" => Shape::Rectangle {
+                p1: Point2D::rand_new(0.0, x_height as f32, 0.0, y_width as f32),
+                p2: Point2D::rand_new(0.0, x_height as f32, 0.0, y_width as f32),
+                color: Color::rand_new(),
+            },
             _ => panic!("未知的 Shape 类别!"),
         }
     }
@@ -279,20 +317,22 @@ impl Shape {
                 let l_ab = Line::new(p_a, p_b);
                 let l_ac = Line::new(p_a, p_c);
                 let l_bc = Line::new(p_b, p_c);
-                // 将浮点坐标对齐到网格
+                // 将浮点坐标对齐到网格, 并对越界的规范到边界
                 let [x_max, y_max] = [(canvas.x_height - 1) as f32, (canvas.y_width - 1) as f32];
                 let x2i = |x: f32| {x.round().clamp(0.0, x_max as f32) as usize};
                 let y2j = |y: f32| {y.round().clamp(0.0, y_max as f32) as usize};
                 let i_start = x2i(p_a.x);
                 let i_mid = x2i(p_b.x);
                 let i_end = x2i(p_c.x);
-                // 按行绘制三角形
-                for i in i_start..i_mid {       // Part I
+                // 将三角形分成两部分, 按行绘制
+                // Part I
+                for i in i_start..i_mid {
                     let j_one_side = y2j(l_ab.at(i as f32));
                     let j_another_side = y2j(l_ac.at(i as f32));
                     canvas.draw_horizontal_line(i, j_one_side, j_another_side, color);
                 }
-                for i in i_mid..=i_end {       // Part II
+                // Part II
+                for i in i_mid..=i_end {
                     let j_one_side = y2j(l_bc.at(i as f32));
                     let j_another_side = y2j(l_ac.at(i as f32));
                     canvas.draw_horizontal_line(i, j_one_side, j_another_side, color);
@@ -315,13 +355,27 @@ impl Shape {
 pub struct Individual {
     shapes: Vec<Shape>,
     fitness: Option<f32>,
+    env_height: usize,
+    env_width: usize,
+    bg_color: (f32, f32, f32),
 }
 impl Individual {
     /// 初始化一个空白个体
-    pub fn new() -> Individual {
+    pub fn new(env_height: usize, env_width: usize, bg_color: (f32, f32, f32)) -> Individual {
         Individual {
             shapes: Vec::new(),
             fitness: None,
+            env_height,
+            env_width,
+            bg_color,
+        }
+    }
+
+    /// 复制一份自己
+    pub fn clone(&self) -> Individual {
+        let shapes = self.shapes.clone();
+        Individual {
+            shapes, ..*self
         }
     }
 
@@ -342,34 +396,42 @@ impl Individual {
     }
 
     /// 令个体第 which 个 Shape 进行变异
-    pub fn mutate(&mut self, which: usize, canvas_size: usize, amp: f32) {
+    pub fn mutate_shape(&mut self, which: usize, canvas_size: usize, amp: f32) {
         debug_assert!(which < self.n_shapes(), "越界的下标!");
         self.shapes[which].mutate(canvas_size, amp);
+        self.fitness = None;    // fitness 有待重新计算
     }
 
     /// 令个体添加一个 Shape. 类型指定, 但属性随机.
     pub fn add_shape(&mut self, type_name: &str, x_height: usize, y_width: usize) {
         self.shapes.push(Shape::rand_new(type_name, x_height, y_width));
+        self.fitness = None;    // fitness 有待重新计算
     }
 
-    /// 绘制自身
-    pub fn draw_self(&self, on: &mut Canvas) {
+    /// 绘制自身到 Canvas 并返回这个 Canvas
+    pub fn draw_self(&self) -> Canvas {
+        let mut canvas = Canvas::new(self.env_height, self.env_width, self.bg_color);
         for shape in &self.shapes {
-            shape.draw_to(on);
+            shape.draw_to(&mut canvas);
         }
+        canvas
     }
 
     /// 计算个体的适应度, 存储到 fitness 字段中
     pub fn calc_fitness(&mut self, target: &Canvas) {
-        // 绘制自己的图像到 canvas
-        let mut canvas = Canvas::new(target.x_height, target.y_width);
-        self.draw_self(&mut canvas);
-        // 将 canvas 与目标图片 target 进行逐像素的比对
-        let mut total_diff = 0.0;
-        for idx in 0..canvas.pixels.len() {
-            total_diff += Pixel::l2_dist(&canvas.pixels[idx], &target.pixels[idx]);
-        }
+        // 避免重复计算
+        if self.fitness.is_some() { return }
+        // 绘制自己的图像
+        let selfie = self.draw_self();
+        // 与目标图片 target 进行逐像素的比对
+        let diff = Canvas::l2_diff(&selfie, &target);
         // 存储到 fitness 字段
-        self.fitness = Some(total_diff);
+        self.fitness = Some(diff);
     }
+
+    /// 返回个体的 fitness 字段. 如果是 None 则 panic
+    pub fn get_fitness(&self) -> f32 {
+        self.fitness.expect("请先显式调用 calc_fitness 计算适应度!")
+    }
+
 }
