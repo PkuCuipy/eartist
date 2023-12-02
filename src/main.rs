@@ -2,6 +2,8 @@ mod util;
 
 use std::cmp::min;
 use util::*;
+use std::fs;
+use chrono;
 
 /* TODO list:
     - 编译为 Wasm, 在 Web 端实现可调的超参数交互 (main 中的 const 变量绝大多数应实现交互可改)
@@ -17,6 +19,13 @@ fn main() {
     let x_height = target.x_height;
     let y_width = target.y_width;
     let canvas_size = min(x_height, y_width);
+
+    // 保存文件夹
+    let datetime = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let save_folder = format!("./src/result/generation_best_{}", datetime);
+    if !std::path::Path::new(&save_folder).exists() {
+        fs::create_dir_all(&save_folder).unwrap();
+    }
 
     // 设定种群超参数
     const POP_SIZE: usize = 4;          // 种群大小. 取值范围 [1, ∞)
@@ -45,7 +54,7 @@ fn main() {
     }
 
     // 开始迭代
-    for gen in 1..=100000 {
+    for gen in 1..=100_000_000 {
         println!("第 {} 轮开始迭代", gen);
 
         let mut new_generation: Vec<Individual> = Vec::with_capacity(POP_SIZE * PROP_AMOUNT + N_GUARD);
@@ -102,7 +111,7 @@ fn main() {
            (gen % 10000 == 0)
         {
             let canv = gen_best.draw_self();
-            canv.write_to_file(format!("./src/result/generation_best/{}.png", gen).as_str());
+            canv.write_to_file(format!("{}/{}.png", save_folder, gen).as_str());
         }
 
     }
