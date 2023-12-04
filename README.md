@@ -1,5 +1,5 @@
 # EARtist
-Evolutionary artist and their hundreds of shapes.
+Evolutionary artist, using hundreds of shapes to fit the given image.
 
 ## Quick Start
 ```bash
